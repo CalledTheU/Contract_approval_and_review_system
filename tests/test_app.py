@@ -4,6 +4,7 @@
 
 import io
 import os
+import time
 import unittest
 from unittest.mock import patch
 
@@ -28,6 +29,17 @@ class ContractFlowTest(unittest.TestCase):
         self.assertEqual(login.status_code, 200, login.text)
         self.client.headers.update({"Authorization": f"Bearer {login.json()['token']}"})
 
+    def wait_task(self, task_id, headers=None, timeout=5):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            response = self.client.get(f"/api/review/tasks/{task_id}", headers=headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            result = response.json()
+            if result["task"]["status"] in {"completed", "blocked"}:
+                return result
+            time.sleep(0.05)
+        self.fail(f"task {task_id} did not reach a terminal state")
+
     def tearDown(self):
         self.client.close()
         self.db_patch.stop()
@@ -47,10 +59,11 @@ class ContractFlowTest(unittest.TestCase):
         doc.save(body)
         uploaded = self.client.post("/api/contracts/upload", files={"file": ("risk.docx", body.getvalue(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
         self.assertEqual(uploaded.status_code, 200, uploaded.text)
-        result = uploaded.json()
-        task_id = result["task"]["id"]
+        initial = uploaded.json()
+        task_id = initial["task"]["id"]
         self.uploads.append(storage.UPLOADS / f"{task_id}.docx")
-        self.assertEqual(result["task"]["status"], "completed")
+        self.assertIn(initial["task"]["status"], {"pending", "parsing", "reviewing", "completed"})
+        result = self.wait_task(task_id)
         self.assertTrue(any(risk["level"] == "HIGH" for risk in result["risks"]))
         self.assertTrue(all(risk["original_text"] in result["task"]["text"] for risk in result["risks"]))
 
@@ -112,13 +125,15 @@ class ContractFlowTest(unittest.TestCase):
         uploaded = self.client.post("/api/contracts/upload", files={"file": ("risk.pdf", source.getvalue(), "application/pdf")}).json()
         task_id = uploaded["task"]["id"]
         self.uploads.append(storage.UPLOADS / f"{task_id}.pdf")
+        uploaded = self.wait_task(task_id)
         ip_risk = next(risk for risk in uploaded["risks"] if risk["clause_type"] == "ip")
         self.assertEqual(ip_risk["page"], 2)
 
         admin = self.client.post("/api/auth/login", json={"username": "admin", "password": "Demo123!"}).json()
         headers = {"Authorization": f"Bearer {admin['token']}"}
-        blocked = self.client.post("/api/contracts/upload", files={"file": ("scan.png", b"not-an-image", "image/png")}, headers=headers).json()
-        self.uploads.append(storage.UPLOADS / f"{blocked['task']['id']}.png")
+        blocked_initial = self.client.post("/api/contracts/upload", files={"file": ("scan.png", b"not-an-image", "image/png")}, headers=headers).json()
+        self.uploads.append(storage.UPLOADS / f"{blocked_initial['task']['id']}.png")
+        blocked = self.wait_task(blocked_initial["task"]["id"], headers=headers)
         self.assertEqual(blocked["task"]["status"], "blocked")
         self.assertTrue(blocked["task"]["blocked_reason"])
         retried = self.client.post(f"/api/review/tasks/{blocked['task']['id']}/retry", headers=headers).json()

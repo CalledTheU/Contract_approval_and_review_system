@@ -3,11 +3,13 @@
 # Date: 2026-09-28
 
 import json
+import os
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 
 from backend.auth import allow_roles, current_user
 from backend.document_service import extract, metadata
@@ -25,6 +27,33 @@ def save_risks(db, task_id, text, risks):
         db.execute("INSERT INTO risks(id,task_id,level,title,clause_type,original_text,start,end,page,reason,legal_basis,suggestion,suggested_text) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", (str(uuid.uuid4()), task_id, risk["level"], risk["title"], risk["clause_type"], risk["original_text"], risk["start"], risk["end"], page, risk["reason"], risk["legal_basis"], risk["suggestion"], risk["suggested_text"]))
 
 
+def process_upload(task_id, path, suffix):
+    started = time.monotonic()
+    try:
+        with connect() as db:
+            db.execute("UPDATE tasks SET status='parsing' WHERE id=?", (task_id,))
+            log(db, task_id, "文档解析开始")
+        text, pages = extract(path, suffix)
+        if not text.strip():
+            raise ValueError("文档正文为空")
+        with connect() as db:
+            db.execute("UPDATE tasks SET status='reviewing',text=?,metadata=? WHERE id=?", (text, json.dumps({**metadata(text), "pages": pages}, ensure_ascii=False), task_id))
+            log(db, task_id, "文档解析完成，开始风险审查")
+        risks = review(text)
+        # ponytail: configurable floor keeps the asynchronous state visible in a local demo; production can set 0.
+        floor = max(0.0, float(os.getenv("MIN_REVIEW_SECONDS", "1.2")))
+        time.sleep(max(0.0, floor - (time.monotonic() - started)))
+        with connect() as db:
+            db.execute("DELETE FROM risks WHERE task_id=?", (task_id,))
+            save_risks(db, task_id, text, risks)
+            db.execute("UPDATE tasks SET status='completed',blocked_reason=NULL WHERE id=?", (task_id,))
+            log(db, task_id, "AI审查完成")
+    except Exception as exc:
+        with connect() as db:
+            db.execute("UPDATE tasks SET status='blocked',blocked_reason=? WHERE id=?", (str(exc)[:1000], task_id))
+            log(db, task_id, f"任务阻塞：{exc}")
+
+
 @router.get("/api/review/tasks")
 def list_tasks(user=Depends(current_user)):
     with connect() as db:
@@ -40,7 +69,7 @@ def list_tasks(user=Depends(current_user)):
 
 
 @router.post("/api/contracts/upload")
-async def upload_contract(file: UploadFile = File(...), name: str = Form(""), user=Depends(allow_roles("business", "legal", "admin"))):
+async def upload_contract(background_tasks: BackgroundTasks, file: UploadFile = File(...), name: str = Form(""), user=Depends(allow_roles("business", "legal", "admin"))):
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in FORMATS:
         raise HTTPException(400, "仅支持 DOCX、PDF 和图片")
@@ -51,18 +80,10 @@ async def upload_contract(file: UploadFile = File(...), name: str = Form(""), us
     path = UPLOADS / f"{task_id}{suffix}"
     path.write_bytes(content)
     created = datetime.now(timezone.utc).isoformat()
-    status, error, text, pages, risks = "completed", None, "", 0, []
-    try:
-        text, pages = extract(path, suffix)
-        if not text.strip():
-            raise ValueError("文档正文为空")
-        risks = review(text)
-    except Exception as exc:
-        status, error = "blocked", str(exc)[:1000]
     with connect() as db:
-        db.execute("INSERT INTO tasks(id,name,filename,text,status,blocked_reason,metadata,created_at,owner_id) VALUES(?,?,?,?,?,?,?,?,?)", (task_id, name.strip() or Path(file.filename).stem, file.filename or path.name, text, status, error, json.dumps({**metadata(text), "pages": pages}, ensure_ascii=False), created, user["id"]))
-        save_risks(db, task_id, text, risks)
-        log(db, task_id, "任务创建与审查完成" if status == "completed" else f"任务阻塞：{error}")
+        db.execute("INSERT INTO tasks(id,name,filename,text,status,blocked_reason,metadata,created_at,owner_id) VALUES(?,?,?,?,?,?,?,?,?)", (task_id, name.strip() or Path(file.filename).stem, file.filename or path.name, "", "pending", None, "{}", created, user["id"]))
+        log(db, task_id, "任务创建，等待解析")
+    background_tasks.add_task(process_upload, task_id, path, suffix)
     task, risk_items = task_data(task_id)
     return {"task": task, "risks": risk_items}
 

@@ -1,6 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 const state = { tasks: [], selected: null, risks: [], toastTimer: null, token: localStorage.getItem('contract-review-token'), user: null };
 const labels = { completed: '审查完成', blocked: '需处理', HIGH: '高风险', MEDIUM: '中风险', LOW: '低风险' };
+const statusLabels = { pending: '\u7b49\u5f85\u89e3\u6790', parsing: '\u6587\u6863\u89e3\u6790\u4e2d', reviewing: '\u98ce\u9669\u5ba1\u67e5\u4e2d', completed: '\u5ba1\u67e5\u5b8c\u6210', blocked: '\u9700\u5904\u7406' };
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
 async function api(url, options = {}) {
@@ -25,6 +26,7 @@ function toast(message) {
 }
 
 function badge(level, label = labels[level] || level) {
+  if (statusLabels[level]) label = statusLabels[level];
   const kind = ({ HIGH: 'high', MEDIUM: 'medium', LOW: 'low', completed: 'completed', blocked: 'blocked' })[level] || 'neutral';
   return `<span class="badge ${kind}">${esc(label)}</span>`;
 }
@@ -45,6 +47,20 @@ async function refreshTasks(keepSelection = true) {
     else clearTask();
   } else {
     await openTask(state.selected);
+  }
+}
+
+async function watchTask(taskId) {
+  for (;;) {
+    const result = await api(`/api/review/tasks/${encodeURIComponent(taskId)}`);
+    if (result.task.status === 'completed' || result.task.status === 'blocked') {
+      await refreshTasks(false);
+      await openTask(taskId);
+      toast(result.task.status === 'blocked' ? '合同解析受阻，请查看原因' : '合同审查已完成');
+      return;
+    }
+    await openTask(taskId);
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 }
 
@@ -92,7 +108,7 @@ async function openTask(id) {
   const canReview = ['legal', 'admin'].includes(state.user?.role);
   $('#review-actions').hidden = task.status !== 'completed' || !canReview;
   $('#document-name').textContent = task.name;
-  $('#document-meta').textContent = `${task.filename} · ${task.status === 'completed' ? '审查完成' : '需处理'}`;
+  $('#document-meta').textContent = `${task.filename} · ${statusLabels[task.status] || task.status}`;
   $('#file-type').textContent = (task.filename.split('.').pop() || 'FILE').slice(0, 4).toUpperCase();
   $('#retry-button').hidden = task.status !== 'blocked' || state.user?.role !== 'admin';
   $('#blocked-message').hidden = task.status !== 'blocked';
@@ -103,6 +119,7 @@ async function openTask(id) {
   $('#source-page').textContent = `${meta.pages || 1} 页 · ${task.text.length.toLocaleString()} 字`;
   renderSource(task.text || '无法显示正文内容', state.risks);
   renderRisks();
+  if (!task.text && task.status !== 'blocked') renderSource('\u6b63\u5728\u89e3\u6790\u6587\u6863\uff0c\u8bf7\u7a0d\u5019...', state.risks);
   $('#legal-comment').value = task.comments || '';
   $('#writeback-state').textContent = task.writeback_status === 'success' ? '已回写到模拟审批系统' : task.writeback_status === 'failed' ? '回写失败，可重试' : '尚未回写';
   $('#markdown-link').href = `/api/review/tasks/${encodeURIComponent(id)}/report/markdown`;
@@ -197,7 +214,8 @@ $('#contract-file').addEventListener('change', async (event) => {
     const result = await api('/api/contracts/upload', { method: 'POST', body: form });
     await refreshTasks(false);
     await openTask(result.task.id);
-    toast(result.task.status === 'blocked' ? '文件已接收，解析受阻，请查看原因' : '合同已解析并完成规则审查');
+    toast('合同已接收，正在解析与审查');
+    await watchTask(result.task.id);
   } catch (error) { toast(error.message); }
   event.target.value = '';
 });
