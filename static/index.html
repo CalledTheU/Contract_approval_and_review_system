@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f6f5">
+  <title>合同审查工作台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <section id="login-screen" class="login-screen" hidden>
+    <form id="login-form" class="login-form">
+      <div class="brand-mark">法</div>
+      <p class="eyebrow">LEGAL OPERATIONS</p>
+      <h1>登录合同审查</h1>
+      <p class="login-subtitle">使用本地演示账号继续</p>
+      <label for="login-user">用户角色</label>
+      <select id="login-user"><option value="legal">法务审查员</option><option value="business">业务经办人</option><option value="admin">系统管理员</option></select>
+      <label for="login-password">密码</label>
+      <input id="login-password" type="password" autocomplete="current-password" value="Demo123!" required>
+      <div id="login-error" class="login-error" role="alert"></div>
+      <button class="button button-primary" type="submit">登录</button>
+      <small>演示账号密码见项目 README</small>
+    </form>
+  </section>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="合同审查首页">
+        <span class="brand-mark">法</span>
+        <span><strong>合同审查</strong><small>LEGAL OPERATIONS</small></span>
+      </a>
+      <div class="side-caption">工作空间</div>
+      <button class="nav-item active" type="button"><span class="nav-icon">▦</span>审查工作台</button>
+      <div class="side-bottom">
+        <div class="service-state"><span class="state-dot"></span><span>本地审查服务</span><b>运行中</b></div>
+        <div class="side-version">合同审查系统 <span>v1.0</span></div>
+      </div>
+    </aside>
+    <main class="main-area">
+      <header class="topbar">
+        <div class="breadcrumb"><span>合同管理</span><span class="crumb-slash">/</span><strong>审查工作台</strong></div>
+        <div class="top-actions">
+          <span class="user-label" id="user-label"></span>
+          <button class="icon-button logout-button" id="logout-button" type="button" title="退出登录" aria-label="退出登录">↪</button>
+          <button class="button button-quiet" id="demo-button" type="button"><span aria-hidden="true">▶</span> 风险示例</button>
+          <button class="button button-quiet normal-demo" id="normal-demo-button" type="button">正常示例</button>
+          <label class="button button-primary upload-button" for="contract-file"><span aria-hidden="true">＋</span> 上传合同</label>
+          <input id="contract-file" type="file" accept=".docx,.pdf,.png,.jpg,.jpeg,.tif,.tiff" hidden>
+        </div>
+      </header>
+      <section class="page-content">
+        <div class="page-heading">
+          <div><p class="eyebrow">CONTRACT REVIEW</p><h1>合同审查</h1><p class="subheading">文档解析、风险识别与法务复核</p></div>
+          <div class="updated-label"><span class="state-dot"></span>审查规则已就绪</div>
+        </div>
+        <div class="metric-row" id="metrics">
+          <div class="metric"><span>审查任务</span><strong id="metric-total">0</strong><small>全部任务</small></div>
+          <div class="metric"><span>待复核风险</span><strong id="metric-high" class="metric-red">0</strong><small>高风险事项</small></div>
+          <div class="metric"><span>已完成</span><strong id="metric-completed">0</strong><small>审查已完成</small></div>
+          <div class="metric"><span>回写成功</span><strong id="metric-writeback" class="metric-green">0</strong><small>模拟审批系统</small></div>
+        </div>
+        <div class="toolbar">
+          <div class="toolbar-title"><h2>审查任务</h2><span id="task-count" class="count-label">0 项</span></div>
+          <div class="filters">
+            <label class="search-box"><span aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="搜索合同名称" aria-label="搜索合同名称"></label>
+            <select id="status-filter" aria-label="按状态筛选"><option value="">全部状态</option><option value="completed">审查完成</option><option value="blocked">需处理</option></select>
+            <select id="risk-filter" aria-label="按风险筛选"><option value="">全部风险</option><option value="HIGH">高风险</option><option value="MEDIUM">中风险</option><option value="LOW">低风险</option></select>
+          </div>
+        </div>
+        <div class="workbench">
+          <section class="task-panel panel" aria-label="合同列表">
+            <div class="panel-heading"><h3>合同列表</h3><span id="visible-count">0</span></div>
+            <div id="task-list" class="task-list"><div class="empty-state">载入中…</div></div>
+          </section>
+          <section class="document-panel panel" aria-label="合同原文">
+            <div id="document-empty" class="document-empty">
+              <div class="empty-symbol">文</div><h3>选择合同开始复核</h3><p>上传 Word、PDF 或扫描图片，自动解析并检查风险。</p>
+              <button class="button button-primary" id="empty-upload" type="button">选择合同</button>
+            </div>
+            <div id="document-content" hidden>
+              <div class="document-heading">
+                <div class="file-type" id="file-type">DOC</div>
+                <div class="document-title"><h2 id="document-name"></h2><p id="document-meta"></p></div>
+                <button class="icon-button" id="retry-button" type="button" title="重新审查" aria-label="重新审查" hidden>↻</button>
+              </div>
+              <div id="blocked-message" class="blocked-message" hidden></div>
+              <div class="document-facts" id="document-facts"></div>
+              <div class="source-heading"><h3>合同正文</h3><span id="source-page">第 1 页</span></div>
+              <article id="contract-text" class="contract-text"></article>
+              <div class="legal-note">自动审查结果仅供法务参考，最终意见以人工复核为准。</div>
+            </div>
+          </section>
+          <aside class="review-panel panel" aria-label="风险审查">
+            <div class="review-header"><div><h3>风险审查</h3><p id="risk-summary">选择一份合同查看风险</p></div><span id="risk-total" class="risk-total">—</span></div>
+            <div class="risk-legend"><span><i class="legend-dot high"></i>高风险</span><span><i class="legend-dot medium"></i>中风险</span><span><i class="legend-dot low"></i>低风险</span></div>
+            <div id="risk-list" class="risk-list"><div class="empty-state compact">暂无风险项</div></div>
+            <div class="review-actions" id="review-actions" hidden>
+              <label class="field-label" for="legal-comment">法务意见</label>
+              <textarea id="legal-comment" rows="3" placeholder="补充复核意见"></textarea>
+              <div class="action-row"><button class="button button-quiet" id="save-comment" type="button">保存意见</button><button class="button button-primary" id="writeback-button" type="button">确认并回写</button></div>
+              <div class="writeback-state" id="writeback-state"></div>
+              <div class="export-row"><a id="markdown-link" href="#">下载 Markdown</a><a id="pdf-link" href="#">下载 PDF</a></div>
+            </div>
+          </aside>
+        </div>
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
